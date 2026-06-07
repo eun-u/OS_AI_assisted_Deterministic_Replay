@@ -13,7 +13,7 @@ This project is not a full-system deterministic replay implementation. It is a L
 | `random_demo` | pass | getrandom payload replay works for the demo |
 | `read_file_demo` | pass | file read payload replay works for the demo |
 | `mutex_counter` | pass | pthread sync hook records lock/unlock events while observable output replays |
-| `sqlite_smoke` | pass | SQLite CLI workload script has end-to-end matching output |
+| `sqlite_smoke` | output-equivalence smoke | SQLite CLI workload should match exit/stdout/stderr; event sequence drift is treated as analysis evidence |
 | `drift_demo` | fail | intentional stdout drift caused by non-replayed process id |
 | `race_counter` | pass or fail | scheduling-dependent output drift sample; fail is an analysis case, not an infrastructure failure |
 | `deadlock_demo` | pass | sync-including observable replay sample, not a confirmed deadlock detector |
@@ -24,6 +24,8 @@ This project is not a full-system deterministic replay implementation. It is a L
 Record and replay event counts are not required to match. Record traces include broad observation events, including pthread hook entries. Replay traces focus on replay execution and checked/replayable events.
 
 `event_sequence=true` with `stdout_hash=false` means the configured replayable event comparison passed while the target's observable output still drifted. This can happen for race-like behavior or process/environment-dependent output.
+
+For external shell workloads such as `sqlite_smoke`, output equivalence is the primary smoke condition. The script may report `event_sequence=false` because shell, sqlite, and dynamic loader startup reads are intentionally not all forced through payload replay.
 
 The analyzer ranks investigation candidates. It does not confirm root causes.
 

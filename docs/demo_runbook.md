@@ -26,7 +26,7 @@ Expected result:
 - CMake configure and build complete.
 - CTest passes.
 - `random_demo`, `read_file_demo`, and `mutex_counter` verify as `pass`.
-- `sqlite_smoke` verifies as `pass` when `sqlite3` is installed.
+- `sqlite_smoke` is an output-equivalence smoke when `sqlite3` is installed. Exit/stdout/stderr should match; event sequence drift is kept as analysis evidence.
 - `drift_demo` intentionally produces `verify_status: fail` with a stdout drift summary.
 - `race_counter` may pass or fail depending on scheduling.
 - `deadlock_demo` verifies replayability of its observable output.

@@ -45,7 +45,8 @@ python3 src/adr_cli/adr.py run --target ./build/tests/time_demo --repeat 1 --rep
 ./build/adr analyze --original traces/random_record --replay traces/random_replay \
   --verify reports/random_verify.json --out reports/random_analysis.md
 
-# Optional external workload if sqlite3 is installed
+# Optional external workload if sqlite3 is installed.
+# This is an output-equivalence smoke; event_sequence drift may still be analyzed.
 ./build/adr run --target ./scripts/sqlite_smoke.sh --trace-root traces --report reports/sqlite.md
 
 # Problem-oriented demos
