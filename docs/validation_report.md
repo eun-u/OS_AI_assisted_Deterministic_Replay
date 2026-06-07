@@ -34,4 +34,4 @@ The analyzer ranks investigation candidates. It does not confirm root causes.
 - v0.1 does not control scheduler order.
 - fork/exec tree replay, network replay, io_uring, and full-system replay are out of scope.
 - LLM assistance is currently deterministic mock/offline summarization.
-- Final claims should be revalidated on Ubuntu VM or native Ubuntu from a fresh clone.
+- GitHub Actions runs full validation on a fresh Ubuntu runner. Manual Ubuntu VM/native runs are still useful for final presentation evidence.

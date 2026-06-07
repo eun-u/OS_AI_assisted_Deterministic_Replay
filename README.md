@@ -76,3 +76,6 @@ python3 src/adr_cli/adr.py run --target ./build/tests/time_demo --repeat 1 --rep
 - `docs/analyzer_score_policy.md`
 - `docs/llm_assist_design.md`
 - `docs/demo_runbook.md`
+- `docs/sample_reports/drift.md`
+
+CI는 `reports/`를 artifact로 업로드합니다. 저장소에는 대표 예시만 `docs/sample_reports/` 아래에 보관하고, 실행별 전체 리포트는 CI artifact 또는 로컬 `reports/`에서 확인합니다.
