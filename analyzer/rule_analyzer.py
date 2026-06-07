@@ -41,6 +41,42 @@ def score_candidates(original: Path, replay: Path, verify: dict[str, Any], top_k
                 "reason": reason,
             }
         ][:top_k]
+    if verify.get("status") == "fail" and not mismatch:
+        candidates: list[dict[str, Any]] = []
+        checks = verify.get("checks", {})
+        if not checks.get("stdout_hash", True):
+            candidates.append(
+                {
+                    "rule": "R-OUTPUT",
+                    "score": 0.92,
+                    "reason": "stdout changed even though replayable syscall alignment passed; inspect output-producing code and non-replayed process/environment values",
+                }
+            )
+        if not checks.get("exit_code", True):
+            candidates.append(
+                {
+                    "rule": "R-EXIT",
+                    "score": 0.86,
+                    "reason": "exit code changed without a replayable syscall cursor mismatch; inspect application-level branch and error paths",
+                }
+            )
+        if any(ev.get("etype") == "SYNC" for ev in original_events + replay_events):
+            candidates.append(
+                {
+                    "rule": "R-SYNC",
+                    "score": 0.72,
+                    "reason": "pthread synchronization events were present; scheduling-dependent state remains a possible cause for output drift",
+                }
+            )
+        if not candidates:
+            candidates.append(
+                {
+                    "rule": "R-HIGHLEVEL",
+                    "score": 0.5,
+                    "reason": "high-level result checks failed, but no replayable syscall mismatch was found",
+                }
+            )
+        return candidates[:top_k]
     original_seq = mismatch.get("original_seq")
     replay_seq = mismatch.get("replay_seq")
 
@@ -111,6 +147,7 @@ def score_candidates(original: Path, replay: Path, verify: dict[str, Any], top_k
 
 
 def render_markdown(original: Path, replay: Path, verify: dict[str, Any], candidates: list[dict[str, Any]]) -> str:
+    first_mismatch = verify.get("first_mismatch")
     lines = [
         "# ADR Analysis Report",
         "",
@@ -121,12 +158,30 @@ def render_markdown(original: Path, replay: Path, verify: dict[str, Any], candid
         "## First Mismatch",
         "",
         "```json",
-        json.dumps(verify.get("first_mismatch"), indent=2, ensure_ascii=False),
+        json.dumps(first_mismatch, indent=2, ensure_ascii=False),
         "```",
         "",
-        "## Top Signals",
-        "",
     ]
+    checks = verify.get("checks", {})
+    if verify.get("status") == "fail" and not first_mismatch:
+        failed = [name for name, ok in checks.items() if not ok]
+        lines.extend(
+            [
+                "## Drift Summary",
+                "",
+                "No replayable syscall cursor mismatch was found, but one or more high-level checks failed.",
+                f"- failed_checks: `{', '.join(failed) if failed else 'unknown'}`",
+                "",
+            ]
+        )
+        if "stdout_hash" in failed:
+            lines.extend(
+                [
+                    "The target completed with a different stdout hash. This indicates high-level output drift even though the checked replayable syscall sequence aligned.",
+                    "",
+                ]
+            )
+    lines.extend(["## Top Signals", ""])
     for i, candidate in enumerate(candidates, 1):
         lines.append(f"{i}. `{candidate['rule']}` score={candidate['score']:.2f}")
         lines.append(f"   - {candidate['reason']}")

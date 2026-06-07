@@ -8,6 +8,7 @@ set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 enable_testing()
 
 find_package(Python3 COMPONENTS Interpreter REQUIRED)
+find_program(SQLITE3_EXECUTABLE sqlite3)
 
 file(COPY ${CMAKE_SOURCE_DIR}/src/adr_cli/adr.py
      DESTINATION ${CMAKE_BINARY_DIR})
@@ -39,6 +40,7 @@ if(UNIX AND NOT APPLE)
   add_executable(random_demo tests/programs/random_demo/random_demo.c)
   add_executable(read_file_demo tests/programs/read_file_demo/read_file_demo.c)
   add_executable(stdout_demo tests/programs/stdout_demo/stdout_demo.c)
+  add_executable(drift_demo tests/programs/drift_demo/drift_demo.c)
   add_executable(mutex_counter tests/programs/mutex_counter/mutex_counter.c)
   target_link_libraries(mutex_counter PRIVATE pthread)
   add_executable(race_counter tests/programs/race_counter/race_counter.c)
@@ -46,7 +48,7 @@ if(UNIX AND NOT APPLE)
   add_executable(deadlock_demo tests/programs/deadlock_demo/deadlock_demo.c)
   target_link_libraries(deadlock_demo PRIVATE pthread)
 
-  set_target_properties(time_demo random_demo read_file_demo stdout_demo
+  set_target_properties(time_demo random_demo read_file_demo stdout_demo drift_demo
     mutex_counter race_counter deadlock_demo
     PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/tests)
 
@@ -65,6 +67,15 @@ if(UNIX AND NOT APPLE)
       --trace-root ${CMAKE_BINARY_DIR}/traces
       --report ${CMAKE_BINARY_DIR}/reports/time_demo.md
       --repeat 1)
+
+  if(SQLITE3_EXECUTABLE)
+    add_test(NAME sqlite_smoke_pipeline
+      COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/src/adr_cli/adr.py run
+        --target ${CMAKE_SOURCE_DIR}/scripts/sqlite_smoke.sh
+        --trace-root ${CMAKE_BINARY_DIR}/traces
+        --report ${CMAKE_BINARY_DIR}/reports/sqlite_smoke.md
+        --repeat 1)
+  endif()
 else()
   message(WARNING "Low-level ADR targets require Linux x86-64. Only Python CLI files are copied on this platform.")
   add_test(NAME cli_help COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/src/adr_cli/adr.py --help)

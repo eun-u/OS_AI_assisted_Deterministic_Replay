@@ -10,6 +10,7 @@ Windows에서 코드를 관리하되, 저수준 실행은 WSL2 Ubuntu 또는 Nat
 - `adr verify`: original/replay trace의 결과와 주요 이벤트 비교
 - `adr analyze`: drift 주변 원인 후보 Top-K Markdown 리포트 생성
 - `libadr_sync_hook.so`: pthread create/join/mutex/cond 이벤트 JSONL 기록
+- `sqlite_smoke`: SQLite CLI 기반 외부 프로그램 workload smoke test
 
 v0.1은 완전한 전시스템 재현이 아니라 관찰 가능한 결과 재현과 drift 분석에 집중합니다.
 
@@ -31,6 +32,12 @@ python3 src/adr_cli/adr.py run --target ./build/tests/time_demo --repeat 1 --rep
 ./build/adr verify --original traces/random_record --replay traces/random_replay --out reports/random_verify.json
 ./build/adr analyze --original traces/random_record --replay traces/random_replay \
   --verify reports/random_verify.json --out reports/random_analysis.md
+
+# Optional external workload if sqlite3 is installed
+./build/adr run --target ./scripts/sqlite_smoke.sh --trace-root traces --report reports/sqlite.md
+
+# Problem-oriented demos
+./scripts/problem_demos.sh
 ```
 
 ## 제한사항
