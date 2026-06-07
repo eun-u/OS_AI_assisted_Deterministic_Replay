@@ -22,3 +22,4 @@ if command -v sqlite3 >/dev/null 2>&1; then
 fi
 
 "$ROOT/scripts/problem_demos.sh"
+"$ROOT/scripts/perf.sh"

@@ -18,17 +18,8 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y ninja-build sqlite3
 
-      - name: Configure
-        run: cmake -S . -B build -G Ninja
-
-      - name: Build
-        run: cmake --build build
-
-      - name: Run tests
-        run: ctest --test-dir build --output-on-failure
-
-      - name: Run problem demos
-        run: ./scripts/problem_demos.sh
+      - name: Run full validation
+        run: ./scripts/full_validation.sh
 
       - name: Upload reports
         if: always()
