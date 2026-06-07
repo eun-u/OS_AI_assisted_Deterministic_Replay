@@ -10,6 +10,7 @@
 - `mutex_counter`: pthread sync hook smoke test
 - `race_counter`: race drift analysis sample
 - `deadlock_demo`: deadlock timeout/candidate sample
+- `deadlock_timeout_demo`: real no-progress process guarded by `timeout`
 - `sqlite_smoke`: SQLite CLI external workload smoke test
 
 ## Commands
@@ -31,3 +32,5 @@ ctest --test-dir build --output-on-failure
 `sqlite_smoke_pipeline`은 `sqlite3`가 설치된 환경에서만 CTest에 추가됩니다.
 
 문제 상황 리포트는 `./scripts/problem_demos.sh`로 생성합니다. `drift_demo`는 의도적으로 stdout hash mismatch를 만들며, `race_counter`는 스케줄링에 따라 pass/fail이 달라질 수 있습니다.
+
+`scripts/full_validation.sh`는 문제 상황 리포트와 `reports/perf.md`까지 생성합니다. LLM-assisted reports are generated in deterministic mock/offline mode for selected problem demos.

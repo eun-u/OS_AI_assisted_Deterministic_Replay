@@ -14,6 +14,12 @@ Windows에서 코드를 관리하되, 저수준 실행은 WSL2 Ubuntu 또는 Nat
 
 v0.1은 완전한 전시스템 재현이 아니라 관찰 가능한 결과 재현과 drift 분석에 집중합니다.
 
+v0.1 uses a rule-based analyzer as the first implementation of the AI-assisted analysis layer. It does not claim a confirmed root cause. The analyzer ranks investigation candidates such as `R-IO`, `R-SYNC`, and `R-OUTPUT`.
+
+The optional LLM analyzer summarizes verifier/analyzer evidence into a human-readable report and must not override verification results.
+
+Record and replay event counts are not expected to be equal. Record traces include broad observation events such as pthread sync hook entries, while replay traces focus on replayable or checked events.
+
 ## Linux 빌드
 
 ```bash
@@ -44,6 +50,13 @@ python3 src/adr_cli/adr.py run --target ./build/tests/time_demo --repeat 1 --rep
 
 # Problem-oriented demos
 ./scripts/problem_demos.sh
+
+# LLM-assisted mock/offline report
+./build/adr llm-analyze \
+  --verify reports/drift_YYYYMMDD_HHMMSS_NNNNNNNNN_01_verify.json \
+  --analysis reports/drift.md \
+  --stdout-diff reports/drift_YYYYMMDD_HHMMSS_NNNNNNNNN_01_stdout_diff.md \
+  --out reports/drift_llm_analysis.md
 ```
 
 자세한 시연 절차는 `docs/demo_runbook.md`를 참고합니다.
@@ -54,3 +67,11 @@ python3 src/adr_cli/adr.py run --target ./build/tests/time_demo --repeat 1 --rep
 - v0.1은 단일 프로세스 중심이며 fork/exec/network/io_uring 재현은 제외합니다.
 - ptrace 기반이라 성능 최적화보다 관찰성, 정확성, 디버깅 편의성을 우선합니다.
 - WSL2와 Native Ubuntu의 ptrace/perf 동작 차이가 있을 수 있어 최종 검증은 Ubuntu VM/Native를 권장합니다.
+
+추가 문서:
+
+- `docs/validation_report.md`
+- `docs/event_count_interpretation.md`
+- `docs/analyzer_score_policy.md`
+- `docs/llm_assist_design.md`
+- `docs/demo_runbook.md`
