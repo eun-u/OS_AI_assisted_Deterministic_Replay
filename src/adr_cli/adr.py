@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import importlib.util
+import json
 import os
 import subprocess
 import sys
@@ -96,10 +97,9 @@ def cmd_replay(args: argparse.Namespace) -> int:
 
 def cmd_verify(args: argparse.Namespace) -> int:
     verifier = load_module("adr_verifier", ROOT / "verifier" / "verifier.py")
-    result = verifier.verify(Path(args.original), Path(args.replay))
     out = Path(args.out)
+    result = verifier.verify(Path(args.original), Path(args.replay), out)
     out.parent.mkdir(parents=True, exist_ok=True)
-    import json
 
     out.write_text(json.dumps(result, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     print(f"{result['status']}: wrote {out}")
@@ -116,6 +116,21 @@ def cmd_analyze(args: argparse.Namespace) -> int:
         args.top_k,
     )
     print(f"wrote {result['out']}")
+    return 0
+
+
+def cmd_llm_analyze(args: argparse.Namespace) -> int:
+    llm = load_module("adr_llm_analyzer", ROOT / "analyzer" / "llm_analyzer.py")
+    result = llm.analyze(
+        Path(args.verify),
+        Path(args.analysis),
+        Path(args.out),
+        Path(args.json_out) if args.json_out else None,
+        Path(args.stdout_diff) if args.stdout_diff else None,
+        args.mode,
+    )
+    print(f"wrote {result['out_md']}")
+    print(f"wrote {result['out_json']}")
     return 0
 
 
@@ -153,6 +168,19 @@ def cmd_run(args: argparse.Namespace) -> int:
             top_k=3,
         )
         cmd_analyze(analyze_args)
+        if args.llm_analysis:
+            verify_data = json.loads(verify_path.read_text(encoding="utf-8"))
+            llm_out = report.parent / f"{report.stem}_{suffix}_llm_analysis.md"
+            llm_json = report.parent / f"{report.stem}_{suffix}_llm_analysis.json"
+            llm_args = argparse.Namespace(
+                verify=str(verify_path),
+                analysis=str(final_analysis),
+                stdout_diff=verify_data.get("stdout_diff_path"),
+                out=str(llm_out),
+                json_out=str(llm_json),
+                mode=args.llm_mode,
+            )
+            cmd_llm_analyze(llm_args)
         final_verify = verify_path
         if verify_rc != 0 and args.stop_on_fail:
             return verify_rc
@@ -193,12 +221,23 @@ def build_parser() -> argparse.ArgumentParser:
     analyze.add_argument("--top-k", type=int, default=3)
     analyze.set_defaults(func=cmd_analyze)
 
+    llm_analyze = sub.add_parser("llm-analyze", help="generate evidence-grounded LLM-assisted report")
+    llm_analyze.add_argument("--verify", required=True)
+    llm_analyze.add_argument("--analysis", required=True)
+    llm_analyze.add_argument("--stdout-diff")
+    llm_analyze.add_argument("--out", required=True)
+    llm_analyze.add_argument("--json-out")
+    llm_analyze.add_argument("--mode", choices=["mock", "off"], default="mock")
+    llm_analyze.set_defaults(func=cmd_llm_analyze)
+
     run = sub.add_parser("run", help="record, replay, verify, and analyze")
     run.add_argument("--target", required=True)
     run.add_argument("--trace-root", default="traces")
     run.add_argument("--report", default="reports/analysis.md")
     run.add_argument("--repeat", type=int, default=1)
     run.add_argument("--stop-on-fail", action="store_true")
+    run.add_argument("--llm-analysis", action="store_true")
+    run.add_argument("--llm-mode", choices=["mock", "off"], default="mock")
     run.add_argument("--no-sync-hook", dest="sync_hook", action="store_false")
     run.set_defaults(sync_hook=True, func=cmd_run)
     run.add_argument("args", nargs=argparse.REMAINDER)

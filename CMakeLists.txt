@@ -47,9 +47,11 @@ if(UNIX AND NOT APPLE)
   target_link_libraries(race_counter PRIVATE pthread)
   add_executable(deadlock_demo tests/programs/deadlock_demo/deadlock_demo.c)
   target_link_libraries(deadlock_demo PRIVATE pthread)
+  add_executable(deadlock_timeout_demo tests/programs/deadlock_timeout_demo/deadlock_timeout_demo.c)
+  target_link_libraries(deadlock_timeout_demo PRIVATE pthread)
 
   set_target_properties(time_demo random_demo read_file_demo stdout_demo drift_demo
-    mutex_counter race_counter deadlock_demo
+    mutex_counter race_counter deadlock_demo deadlock_timeout_demo
     PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/tests)
 
   add_custom_command(

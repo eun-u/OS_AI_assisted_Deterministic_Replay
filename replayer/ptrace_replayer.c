@@ -21,6 +21,7 @@
 typedef struct {
   long syscall_no;
   unsigned long args[6];
+  char path[PATH_MAX];
 } syscall_entry_t;
 
 typedef struct {
@@ -29,7 +30,9 @@ typedef struct {
   char sha256[ADR_SHA256_HEX_LEN];
   long ret;
   long offset;
+  long fd;
   size_t length;
+  char path[PATH_MAX];
 } replay_event_t;
 
 typedef struct {
@@ -37,6 +40,11 @@ typedef struct {
   size_t len;
   size_t cap;
 } replay_events_t;
+
+typedef struct {
+  long fd;
+  char path[PATH_MAX];
+} fd_path_t;
 
 typedef struct {
   const char *run_id;
@@ -67,8 +75,14 @@ static int is_replayable_syscall(long no) {
 
 static int should_load_replay_event(const replay_event_t *ev) {
   if (ev->syscall_no != SYS_read) return 1;
-  /* Avoid corrupting dynamic loader/libc startup reads. MVP file input demos use small payloads. */
-  return ev->length > 0 && ev->length <= 256;
+  if (ev->fd < 3 || ev->length == 0 || !ev->path[0]) return 0;
+  if (strncmp(ev->path, "/lib/", 5) == 0) return 0;
+  if (strncmp(ev->path, "/lib64/", 7) == 0) return 0;
+  if (strncmp(ev->path, "/usr/lib/", 9) == 0) return 0;
+  if (strcmp(ev->path, "/etc/ld.so.cache") == 0) return 0;
+  if (strcmp(ev->path, "/etc/ld.so.preload") == 0) return 0;
+  if (strstr(ev->path, "libadr_sync_hook.so")) return 0;
+  return strstr(ev->path, "tests/fixtures/") != NULL;
 }
 
 static unsigned long payload_addr(const syscall_entry_t *entry) {
@@ -104,6 +118,38 @@ static ssize_t write_child_mem(pid_t pid, unsigned long addr, const void *buf, s
     copied += chunk;
   }
   return (ssize_t)copied;
+}
+
+static ssize_t read_child_mem(pid_t pid, unsigned long addr, void *buf, size_t len) {
+  struct iovec local = {.iov_base = buf, .iov_len = len};
+  struct iovec remote = {.iov_base = (void *)addr, .iov_len = len};
+  ssize_t n = process_vm_readv(pid, &local, 1, &remote, 1, 0);
+  if (n >= 0 || len == 0) return n;
+
+  size_t copied = 0;
+  while (copied < len) {
+    errno = 0;
+    long word = ptrace(PTRACE_PEEKDATA, pid, (void *)(addr + copied), NULL);
+    if (word == -1 && errno != 0) return copied ? (ssize_t)copied : -1;
+    size_t chunk = sizeof(long);
+    if (copied + chunk > len) chunk = len - copied;
+    memcpy((char *)buf + copied, &word, chunk);
+    copied += chunk;
+  }
+  return (ssize_t)copied;
+}
+
+static int read_child_string(pid_t pid, unsigned long addr, char *out, size_t out_len) {
+  if (!addr || out_len == 0) return -1;
+  size_t max = out_len - 1;
+  ssize_t n = read_child_mem(pid, addr, out, max);
+  if (n <= 0) return -1;
+  size_t limit = (size_t)n;
+  for (size_t i = 0; i < limit; ++i) {
+    if (out[i] == '\0') return 0;
+  }
+  out[limit] = '\0';
+  return 0;
 }
 
 static void emit_line(trace_writer_t *tw, const char *body) {
@@ -223,6 +269,41 @@ static int push_event(replay_events_t *events, replay_event_t ev) {
   return 0;
 }
 
+static void remember_fd_path(fd_path_t *fds, size_t *fd_count, long fd, const char *path) {
+  if (fd < 0 || !path || !*path) return;
+  for (size_t i = 0; i < *fd_count; ++i) {
+    if (fds[i].fd == fd) {
+      snprintf(fds[i].path, sizeof(fds[i].path), "%s", path);
+      return;
+    }
+  }
+  if (*fd_count >= 128) return;
+  fds[*fd_count].fd = fd;
+  snprintf(fds[*fd_count].path, sizeof(fds[*fd_count].path), "%s", path);
+  ++*fd_count;
+}
+
+static void forget_fd_path(fd_path_t *fds, size_t *fd_count, long fd) {
+  for (size_t i = 0; i < *fd_count; ++i) {
+    if (fds[i].fd == fd) {
+      fds[i] = fds[*fd_count - 1];
+      --*fd_count;
+      return;
+    }
+  }
+}
+
+static const char *lookup_fd_path(const fd_path_t *fds, size_t fd_count, long fd) {
+  for (size_t i = 0; i < fd_count; ++i) {
+    if (fds[i].fd == fd) return fds[i].path;
+  }
+  return "";
+}
+
+static int is_fixture_path(const char *path) {
+  return path && strstr(path, "tests/fixtures/") != NULL;
+}
+
 static int load_replay_events(const char *trace_dir, replay_events_t *events) {
   char path[PATH_MAX];
   if (adr_join_path(path, sizeof(path), trace_dir, "events.jsonl") != 0) return -1;
@@ -231,14 +312,34 @@ static int load_replay_events(const char *trace_dir, replay_events_t *events) {
 
   char *line = NULL;
   size_t cap = 0;
+  fd_path_t fds[128];
+  size_t fd_count = 0;
   while (getline(&line, &cap, f) > 0) {
     if (!strstr(line, "\"etype\":\"SYSCALL\"")) continue;
+    long syscall_no = -1;
+    parse_long_field(line, "\"syscall_no\":", &syscall_no);
+    if (syscall_no == SYS_openat) {
+      long fd = -1;
+      char path[PATH_MAX] = {0};
+      parse_long_field(line, "\"ret\":", &fd);
+      parse_string_field(line, "\"path\":\"", path, sizeof(path));
+      remember_fd_path(fds, &fd_count, fd, path);
+      continue;
+    }
+    if (syscall_no == SYS_close) {
+      long fd = -1;
+      parse_long_field(line, "\"a0\":", &fd);
+      forget_fd_path(fds, &fd_count, fd);
+      continue;
+    }
     replay_event_t ev;
     memset(&ev, 0, sizeof(ev));
-    if (parse_long_field(line, "\"syscall_no\":", &ev.syscall_no) != 0) continue;
+    ev.syscall_no = syscall_no;
     if (!is_replayable_syscall(ev.syscall_no)) continue;
     parse_name(line, ev.name, sizeof(ev.name));
     parse_long_field(line, "\"ret\":", &ev.ret);
+    parse_long_field(line, "\"a0\":", &ev.fd);
+    snprintf(ev.path, sizeof(ev.path), "%s", lookup_fd_path(fds, fd_count, ev.fd));
     if (strstr(line, "\"payload_ref\"")) {
       long length = 0;
       parse_long_field(line, "\"offset\":", &ev.offset);
@@ -427,6 +528,8 @@ int main(int argc, char **argv) {
   memset(&entry, 0, sizeof(entry));
   size_t cursor = 0;
   const replay_event_t *active = NULL;
+  fd_path_t live_fds[128];
+  size_t live_fd_count = 0;
 
   for (;;) {
     if (ptrace(PTRACE_SYSCALL, child, NULL, NULL) != 0) break;
@@ -455,16 +558,28 @@ int main(int argc, char **argv) {
       entry.args[3] = regs.r10;
       entry.args[4] = regs.r8;
       entry.args[5] = regs.r9;
+      entry.path[0] = '\0';
+      if (entry.syscall_no == SYS_openat) {
+        read_child_string(child, entry.args[1], entry.path, sizeof(entry.path));
+      }
       active = NULL;
 
       if (is_replayable_syscall(entry.syscall_no)) {
         if (cursor < replay_events.len && replay_events.items[cursor].syscall_no == entry.syscall_no) {
-          active = &replay_events.items[cursor];
+          if (entry.syscall_no != SYS_read ||
+              is_fixture_path(lookup_fd_path(live_fds, live_fd_count, (long)entry.args[0]))) {
+            active = &replay_events.items[cursor];
+          }
         }
       }
       in_syscall = 1;
     } else {
       long ret = (long)regs.rax;
+      if (entry.syscall_no == SYS_openat && ret >= 0 && entry.path[0]) {
+        remember_fd_path(live_fds, &live_fd_count, ret, entry.path);
+      } else if (entry.syscall_no == SYS_close) {
+        forget_fd_path(live_fds, &live_fd_count, (long)entry.args[0]);
+      }
       if (active) {
         void *buf = NULL;
         if (read_payload(trace, active, &buf) == 0) {

@@ -21,6 +21,7 @@
 typedef struct {
   long syscall_no;
   unsigned long args[6];
+  char path[PATH_MAX];
 } syscall_entry_t;
 
 typedef struct {
@@ -94,6 +95,55 @@ static ssize_t read_child_mem(pid_t pid, unsigned long addr, void *buf, size_t l
   return (ssize_t)copied;
 }
 
+static int read_child_string(pid_t pid, unsigned long addr, char *out, size_t out_len) {
+  if (!addr || out_len == 0) return -1;
+  size_t max = out_len - 1;
+  ssize_t n = read_child_mem(pid, addr, out, max);
+  if (n <= 0) return -1;
+  size_t limit = (size_t)n;
+  for (size_t i = 0; i < limit; ++i) {
+    if (out[i] == '\0') return 0;
+  }
+  out[limit] = '\0';
+  return 0;
+}
+
+static int json_escape_buf(char *out, size_t out_len, const char *s) {
+  size_t used = 0;
+  if (out_len < 3) return -1;
+  out[used++] = '"';
+  for (; s && *s; ++s) {
+    unsigned char c = (unsigned char)*s;
+    const char *escaped = NULL;
+    char unicode[8];
+    switch (c) {
+      case '\\': escaped = "\\\\"; break;
+      case '"': escaped = "\\\""; break;
+      case '\n': escaped = "\\n"; break;
+      case '\r': escaped = "\\r"; break;
+      case '\t': escaped = "\\t"; break;
+      default:
+        if (c < 0x20) {
+          snprintf(unicode, sizeof(unicode), "\\u%04x", c);
+          escaped = unicode;
+        }
+    }
+    if (escaped) {
+      size_t len = strlen(escaped);
+      if (used + len + 2 > out_len) return -1;
+      memcpy(out + used, escaped, len);
+      used += len;
+    } else {
+      if (used + 2 > out_len) return -1;
+      out[used++] = (char)c;
+    }
+  }
+  if (used + 2 > out_len) return -1;
+  out[used++] = '"';
+  out[used] = '\0';
+  return 0;
+}
+
 static int append_payload(trace_writer_t *tw, const void *data, size_t len, long *offset, char hash[ADR_SHA256_HEX_LEN]) {
   *offset = ftell(tw->payload);
   if (*offset < 0) return -1;
@@ -125,7 +175,7 @@ static void emit_process(trace_writer_t *tw, pid_t pid, const char *name, const 
 }
 
 static void emit_syscall(trace_writer_t *tw, pid_t pid, const syscall_entry_t *entry, long ret,
-                         const char *payload_json) {
+                         const char *payload_json, const char *extra_json) {
   const char *name = syscall_name(entry->syscall_no);
   char generated_name[64];
   if (!name) {
@@ -139,13 +189,15 @@ static void emit_syscall(trace_writer_t *tw, pid_t pid, const syscall_entry_t *e
            "\"time_ns\":%llu,\"pid\":%d,\"tid\":%d,\"etype\":\"SYSCALL\","
            "\"name\":\"%s\",\"phase\":\"exit\","
            "\"args\":{\"syscall_no\":%ld,\"a0\":%lu,\"a1\":%lu,\"a2\":%lu,\"a3\":%lu,\"a4\":%lu,\"a5\":%lu},"
-           "\"ret\":%ld,\"errno\":%d%s%s",
+           "\"ret\":%ld,\"errno\":%d%s%s%s%s",
            tw->run_id, (unsigned long long)++tw->seq, (unsigned long long)adr_now_ns(),
            pid, pid, name, entry->syscall_no,
            entry->args[0], entry->args[1], entry->args[2], entry->args[3], entry->args[4], entry->args[5],
            ret, ret < 0 ? (int)-ret : 0,
            payload_json && payload_json[0] ? "," : "",
-           payload_json && payload_json[0] ? payload_json : "");
+           payload_json && payload_json[0] ? payload_json : "",
+           extra_json && extra_json[0] ? "," : "",
+           extra_json && extra_json[0] ? extra_json : "");
   emit_line(tw, body);
 }
 
@@ -299,10 +351,15 @@ int main(int argc, char **argv) {
       entry.args[3] = regs.r10;
       entry.args[4] = regs.r8;
       entry.args[5] = regs.r9;
+      entry.path[0] = '\0';
+      if (entry.syscall_no == SYS_openat) {
+        read_child_string(child, entry.args[1], entry.path, sizeof(entry.path));
+      }
       in_syscall = 1;
     } else {
       long ret = (long)regs.rax;
       char payload_json[512] = {0};
+      char extra_json[PATH_MAX + 32] = {0};
       size_t len = payload_len(&entry, ret);
       if (is_payload_syscall(entry.syscall_no) && len > 0) {
         void *buf = malloc(len);
@@ -318,7 +375,13 @@ int main(int argc, char **argv) {
         }
         free(buf);
       }
-      emit_syscall(&tw, child, &entry, ret, payload_json);
+      if (entry.syscall_no == SYS_openat && ret >= 0 && entry.path[0]) {
+        char escaped_path[PATH_MAX + 16];
+        if (json_escape_buf(escaped_path, sizeof(escaped_path), entry.path) == 0) {
+          snprintf(extra_json, sizeof(extra_json), "\"path\":%s", escaped_path);
+        }
+      }
+      emit_syscall(&tw, child, &entry, ret, payload_json, extra_json);
       in_syscall = 0;
     }
   }

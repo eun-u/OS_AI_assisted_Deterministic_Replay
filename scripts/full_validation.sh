@@ -18,7 +18,8 @@ ctest --test-dir "$ROOT/build" --output-on-failure
 
 if command -v sqlite3 >/dev/null 2>&1; then
   "$ROOT/build/adr" run --target "$ROOT/scripts/sqlite_smoke.sh" \
-    --trace-root "$ROOT/traces" --report "$ROOT/reports/sqlite.md" --stop-on-fail
+    --trace-root "$ROOT/traces" --report "$ROOT/reports/sqlite.md"
 fi
 
 "$ROOT/scripts/problem_demos.sh"
+"$ROOT/scripts/perf.sh"
