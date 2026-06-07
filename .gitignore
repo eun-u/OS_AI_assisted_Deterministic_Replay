@@ -1,0 +1,31 @@
+# Build outputs
+build/
+build-*/
+/CMakeFiles/
+/CMakeCache.txt
+/cmake_install.cmake
+/CTestTestfile.cmake
+/build.ninja
+
+# Runtime outputs
+traces/*
+reports/*
+!traces/.gitkeep
+!reports/.gitkeep
+
+# Python cache
+__pycache__/
+*.py[cod]
+
+# Editor and OS files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Logs and temporary files
+*.log
+*.tmp
+
+# Local design documents
+AI_assisted_Deterministic_Replay_개발_설계서.docx
