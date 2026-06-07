@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import difflib
 import json
 from pathlib import Path
 from typing import Any
@@ -90,7 +91,80 @@ def first_sequence_mismatch(a: list[dict[str, Any]], b: list[dict[str, Any]]) ->
     return None
 
 
-def verify(original: Path, replay: Path) -> dict[str, Any]:
+def load_text_lines(path: Path) -> list[str]:
+    if not path.exists():
+        return []
+    return path.read_text(encoding="utf-8", errors="replace").splitlines()
+
+
+def first_output_mismatch(original: Path, replay: Path, stream: str) -> dict[str, Any] | None:
+    original_lines = load_text_lines(original / f"{stream}.log")
+    replay_lines = load_text_lines(replay / f"{stream}.log")
+    limit = min(len(original_lines), len(replay_lines))
+    for index in range(limit):
+        if original_lines[index] != replay_lines[index]:
+            return {
+                "stream": stream,
+                "line": index + 1,
+                "kind": f"{stream}_line_diff",
+                "original": original_lines[index],
+                "replay": replay_lines[index],
+            }
+    if len(original_lines) != len(replay_lines):
+        return {
+            "stream": stream,
+            "line": limit + 1,
+            "kind": f"{stream}_length_diff",
+            "original": original_lines[limit] if limit < len(original_lines) else None,
+            "replay": replay_lines[limit] if limit < len(replay_lines) else None,
+            "original_line_count": len(original_lines),
+            "replay_line_count": len(replay_lines),
+        }
+    return None
+
+
+def write_stream_diff(original: Path, replay: Path, stream: str, out_path: Path) -> dict[str, Any]:
+    original_lines = load_text_lines(original / f"{stream}.log")
+    replay_lines = load_text_lines(replay / f"{stream}.log")
+    diff_lines = list(
+        difflib.unified_diff(
+            original_lines,
+            replay_lines,
+            fromfile=f"original/{stream}.log",
+            tofile=f"replay/{stream}.log",
+            lineterm="",
+        )
+    )
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    body = [
+        f"# {stream.upper()} Diff",
+        "",
+        f"- original: `{original / f'{stream}.log'}`",
+        f"- replay: `{replay / f'{stream}.log'}`",
+        "",
+        "```diff",
+        *diff_lines,
+        "```",
+        "",
+    ]
+    out_path.write_text("\n".join(body), encoding="utf-8")
+    return {
+        "path": str(out_path),
+        "diff_line_count": len(diff_lines),
+        "preview": diff_lines[:20],
+    }
+
+
+def diff_path_for_verify(out_path: Path | None, stream: str) -> Path | None:
+    if out_path is None:
+        return None
+    stem = out_path.stem
+    if stem.endswith("_verify"):
+        stem = stem[: -len("_verify")]
+    return out_path.with_name(f"{stem}_{stream}_diff.md")
+
+
+def verify(original: Path, replay: Path, out_path: Path | None = None) -> dict[str, Any]:
     original_result = load_json(original / "result.json")
     replay_result = load_json(replay / "result.json")
     original_events = load_events(original)
@@ -115,6 +189,20 @@ def verify(original: Path, replay: Path) -> dict[str, Any]:
             "replay": comparable_event(drift_events[0]),
         }
 
+    output_mismatch = None
+    stdout_diff = None
+    stderr_diff = None
+    if not checks["stdout_hash"]:
+        output_mismatch = first_output_mismatch(original, replay, "stdout")
+        stdout_diff_path = diff_path_for_verify(out_path, "stdout")
+        if stdout_diff_path is not None:
+            stdout_diff = write_stream_diff(original, replay, "stdout", stdout_diff_path)
+    if not checks["stderr_hash"]:
+        output_mismatch = output_mismatch or first_output_mismatch(original, replay, "stderr")
+        stderr_diff_path = diff_path_for_verify(out_path, "stderr")
+        if stderr_diff_path is not None:
+            stderr_diff = write_stream_diff(original, replay, "stderr", stderr_diff_path)
+
     return {
         "schema_version": "adr.verify.v1",
         "status": "pass" if all(checks.values()) else "fail",
@@ -130,6 +218,11 @@ def verify(original: Path, replay: Path) -> dict[str, Any]:
             "event_count": len(replay_events),
         },
         "first_mismatch": first_mismatch,
+        "first_output_mismatch": output_mismatch,
+        "stdout_diff_path": stdout_diff["path"] if stdout_diff else None,
+        "stderr_diff_path": stderr_diff["path"] if stderr_diff else None,
+        "stdout_diff_summary": stdout_diff,
+        "stderr_diff_summary": stderr_diff,
         "drift_events": drift_events[:10],
     }
 
@@ -141,7 +234,7 @@ def main() -> int:
     parser.add_argument("--out", required=True, type=Path)
     args = parser.parse_args()
 
-    result = verify(args.original, args.replay)
+    result = verify(args.original, args.replay, args.out)
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(json.dumps(result, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     print(f"{result['status']}: wrote {args.out}")
