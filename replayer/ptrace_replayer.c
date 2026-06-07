@@ -21,6 +21,7 @@
 typedef struct {
   long syscall_no;
   unsigned long args[6];
+  char path[PATH_MAX];
 } syscall_entry_t;
 
 typedef struct {
@@ -117,6 +118,38 @@ static ssize_t write_child_mem(pid_t pid, unsigned long addr, const void *buf, s
     copied += chunk;
   }
   return (ssize_t)copied;
+}
+
+static ssize_t read_child_mem(pid_t pid, unsigned long addr, void *buf, size_t len) {
+  struct iovec local = {.iov_base = buf, .iov_len = len};
+  struct iovec remote = {.iov_base = (void *)addr, .iov_len = len};
+  ssize_t n = process_vm_readv(pid, &local, 1, &remote, 1, 0);
+  if (n >= 0 || len == 0) return n;
+
+  size_t copied = 0;
+  while (copied < len) {
+    errno = 0;
+    long word = ptrace(PTRACE_PEEKDATA, pid, (void *)(addr + copied), NULL);
+    if (word == -1 && errno != 0) return copied ? (ssize_t)copied : -1;
+    size_t chunk = sizeof(long);
+    if (copied + chunk > len) chunk = len - copied;
+    memcpy((char *)buf + copied, &word, chunk);
+    copied += chunk;
+  }
+  return (ssize_t)copied;
+}
+
+static int read_child_string(pid_t pid, unsigned long addr, char *out, size_t out_len) {
+  if (!addr || out_len == 0) return -1;
+  size_t max = out_len - 1;
+  ssize_t n = read_child_mem(pid, addr, out, max);
+  if (n <= 0) return -1;
+  size_t limit = (size_t)n;
+  for (size_t i = 0; i < limit; ++i) {
+    if (out[i] == '\0') return 0;
+  }
+  out[limit] = '\0';
+  return 0;
 }
 
 static void emit_line(trace_writer_t *tw, const char *body) {
@@ -265,6 +298,10 @@ static const char *lookup_fd_path(const fd_path_t *fds, size_t fd_count, long fd
     if (fds[i].fd == fd) return fds[i].path;
   }
   return "";
+}
+
+static int is_fixture_path(const char *path) {
+  return path && strstr(path, "tests/fixtures/") != NULL;
 }
 
 static int load_replay_events(const char *trace_dir, replay_events_t *events) {
@@ -491,6 +528,8 @@ int main(int argc, char **argv) {
   memset(&entry, 0, sizeof(entry));
   size_t cursor = 0;
   const replay_event_t *active = NULL;
+  fd_path_t live_fds[128];
+  size_t live_fd_count = 0;
 
   for (;;) {
     if (ptrace(PTRACE_SYSCALL, child, NULL, NULL) != 0) break;
@@ -519,16 +558,28 @@ int main(int argc, char **argv) {
       entry.args[3] = regs.r10;
       entry.args[4] = regs.r8;
       entry.args[5] = regs.r9;
+      entry.path[0] = '\0';
+      if (entry.syscall_no == SYS_openat) {
+        read_child_string(child, entry.args[1], entry.path, sizeof(entry.path));
+      }
       active = NULL;
 
       if (is_replayable_syscall(entry.syscall_no)) {
         if (cursor < replay_events.len && replay_events.items[cursor].syscall_no == entry.syscall_no) {
-          active = &replay_events.items[cursor];
+          if (entry.syscall_no != SYS_read ||
+              is_fixture_path(lookup_fd_path(live_fds, live_fd_count, (long)entry.args[0]))) {
+            active = &replay_events.items[cursor];
+          }
         }
       }
       in_syscall = 1;
     } else {
       long ret = (long)regs.rax;
+      if (entry.syscall_no == SYS_openat && ret >= 0 && entry.path[0]) {
+        remember_fd_path(live_fds, &live_fd_count, ret, entry.path);
+      } else if (entry.syscall_no == SYS_close) {
+        forget_fd_path(live_fds, &live_fd_count, (long)entry.args[0]);
+      }
       if (active) {
         void *buf = NULL;
         if (read_payload(trace, active, &buf) == 0) {
