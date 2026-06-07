@@ -22,6 +22,12 @@ cmake --build build
 ctest --test-dir build --output-on-failure
 ```
 
+전체 검증과 시연 리포트 생성은 다음 스크립트로 실행할 수 있습니다.
+
+```bash
+./scripts/full_validation.sh
+```
+
 ## 실행 예시
 
 ```bash
@@ -39,6 +45,8 @@ python3 src/adr_cli/adr.py run --target ./build/tests/time_demo --repeat 1 --rep
 # Problem-oriented demos
 ./scripts/problem_demos.sh
 ```
+
+자세한 시연 절차는 `docs/demo_runbook.md`를 참고합니다.
 
 ## 제한사항
 

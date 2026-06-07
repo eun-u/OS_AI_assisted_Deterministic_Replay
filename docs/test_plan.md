@@ -20,6 +20,12 @@ cmake --build build
 ctest --test-dir build --output-on-failure
 ```
 
+전체 검증:
+
+```bash
+./scripts/full_validation.sh
+```
+
 최종 보고서용 결과는 WSL2가 아닌 Ubuntu VM 또는 Native Ubuntu에서 한 번 더 생성합니다.
 
 `sqlite_smoke_pipeline`은 `sqlite3`가 설치된 환경에서만 CTest에 추가됩니다.
